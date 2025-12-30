@@ -1,0 +1,7 @@
+{
+  "name": "CineLearn AI",
+  "description": "A desktop-class English learning application using TV shows, subtitles, and Gemini AI for contextual corpus generation.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
