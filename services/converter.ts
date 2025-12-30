@@ -6,7 +6,8 @@ const ffmpeg = new FFmpeg();
 export const initFFmpeg = async () => {
   if (ffmpeg.loaded) return;
   
-  const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+  // Use version matching the package.json/importmap to avoid compatibility issues
+  const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm';
   
   await ffmpeg.load({
     coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
@@ -27,29 +28,31 @@ export const convertMkvToMp4 = async (
   const inputName = 'input.mkv';
   const outputName = 'output.mp4';
 
-  // Write the file to FFmpeg's virtual file system
-  await ffmpeg.writeFile(inputName, await fetchFile(file));
-
-  // Run FFmpeg command
-  // -i input.mkv: Input file
-  // -c:v copy: Copy video stream (remuxing is much faster than transcoding)
-  // -c:a aac: Convert audio to AAC (ensure browser compatibility)
-  // -strict experimental: Sometimes needed for aac
   try {
-    // Attempt remux first with audio transcode if necessary
+    // Write the file to FFmpeg's virtual file system
+    await ffmpeg.writeFile(inputName, await fetchFile(file));
+
+    // Run FFmpeg command
+    // -i input.mkv: Input file
+    // -c:v copy: Copy video stream (remuxing is much faster than transcoding)
+    // -c:a aac: Convert audio to AAC (ensure browser compatibility)
     await ffmpeg.exec(['-i', inputName, '-c:v', 'copy', '-c:a', 'aac', outputName]);
+
+    // Read the result
+    const data = await ffmpeg.readFile(outputName);
+
+    // Return as Blob
+    return new Blob([data], { type: 'video/mp4' });
   } catch (e) {
     console.error("Conversion error", e);
     throw new Error("Failed to convert video");
+  } finally {
+    // Clean up files from memory to prevent leaks
+    try {
+      await ffmpeg.deleteFile(inputName);
+      await ffmpeg.deleteFile(outputName);
+    } catch (e) {
+      // Ignore cleanup errors if files don't exist
+    }
   }
-
-  // Read the result
-  const data = await ffmpeg.readFile(outputName);
-
-  // Clean up
-  await ffmpeg.deleteFile(inputName);
-  await ffmpeg.deleteFile(outputName);
-
-  // Return as Blob
-  return new Blob([data], { type: 'video/mp4' });
 };

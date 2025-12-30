@@ -20,14 +20,14 @@ export const LearningView: React.FC<LearningViewProps> = ({ savedItems, onDelete
     <div className={`flex-1 ${bgMain} p-8 overflow-y-auto`}>
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h1 className={`text-2xl font-bold ${textMain} mb-2`}>单词本</h1>
+          <h1 className={`text-2xl font-bold ${textMain} mb-2`}>收藏夹</h1>
           <p className={subText}>复习你收藏的生词和例句</p>
         </div>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
           <input 
             type="text" 
-            placeholder="搜索单词..." 
+            placeholder="搜索收藏内容..." 
             className={`${inputBg} pl-10 pr-4 py-2 rounded-xl focus:outline-none focus:border-blue-500 w-64 shadow-sm`}
           />
         </div>
@@ -70,7 +70,7 @@ export const LearningView: React.FC<LearningViewProps> = ({ savedItems, onDelete
 
         {savedItems.length === 0 && (
           <div className="text-center py-20 text-gray-500">
-            <p>还没有收藏单词。去观看视频并收藏一些台词吧！</p>
+            <p>还没有收藏内容。去观看视频并收藏一些台词吧！</p>
           </div>
         )}
       </div>

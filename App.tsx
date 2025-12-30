@@ -55,6 +55,7 @@ const App: React.FC = () => {
   const [theme, setTheme] = useState<Theme>('dark');
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
 
   const handleImportCloud = async (videoUrl: string, subtitleUrl: string, name: string) => {
     const parsed = parseFilename(name);
@@ -105,6 +106,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const loadData = async () => {
+      setIsLoading(true);
       const vids = await db.videos.toArray();
       const flds = await db.folders.toArray();
       const vidsWithUrls = await Promise.all(vids.map(async (v) => {
@@ -121,6 +123,7 @@ const App: React.FC = () => {
       setSavedWords(words);
       const subs = await db.savedSubtitles.toArray();
       setSavedSubtitles(subs);
+      setIsLoading(false);
 
       // Auto-load demo if library is empty
       if (vids.length === 0) {
@@ -174,14 +177,14 @@ const App: React.FC = () => {
       let targetFolderId = folderId;
       if (!targetFolderId && parsed.showName) {
          let rootFolder = folders.find(f => f.name.toLowerCase() === parsed.showName.toLowerCase() && !f.parentId);
-         if (!rootFolder && confirm(`检测到美剧《${parsed.showName}》，是否为其创建文件夹？`)) {
+         if (!rootFolder && window.confirm(`检测到美剧《${parsed.showName}》，是否为其创建文件夹？`)) {
             rootFolder = await handleCreateFolder(parsed.showName);
          }
          if (rootFolder) {
             targetFolderId = rootFolder.id;
             if (parsed.season) {
                let seasonFolder = folders.find(f => f.parentId === rootFolder!.id && f.name.includes(parsed.season!));
-               if (!seasonFolder && confirm(`创建分季目录：${parsed.season}？`)) {
+               if (!seasonFolder && window.confirm(`创建分季目录：${parsed.season}？`)) {
                   seasonFolder = await handleCreateFolder(parsed.season, rootFolder.id);
                }
                if (seasonFolder) targetFolderId = seasonFolder.id;
@@ -214,7 +217,7 @@ const App: React.FC = () => {
       setLibrary(vidsWithUrls);
     } catch (error) {
       console.error(error);
-      alert("Import failed");
+      window.alert("Import failed");
     } finally {
       setIsProcessing(false);
     }
@@ -292,7 +295,7 @@ const App: React.FC = () => {
     };
     await db.savedSubtitles.add(newSub);
     setSavedSubtitles(prev => [...prev, newSub]);
-    alert("字幕已收藏！"); // Simple feedback
+    window.alert("字幕已收藏！"); // Simple feedback
   };
 
   return (
@@ -320,6 +323,7 @@ const App: React.FC = () => {
             onMoveItem={handleMoveItem}
             isProcessing={isProcessing}
             progress={progress}
+            isLoading={isLoading}
             theme={theme}
           />
         )}

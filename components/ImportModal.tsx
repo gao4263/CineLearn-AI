@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { X, Globe, Link, FileText, Film, Loader2 } from 'lucide-react';
 import { Theme } from '../types';
@@ -48,7 +49,7 @@ export const ImportModal = ({ onClose, onImport, theme }: {
                 className={`w-full ${inputBg} border rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:border-blue-500 transition ${text}`}
                 placeholder="例如: 老友记 S01E03"
                 value={name}
-                onChange={e => setName(e.target.value)}
+                onChange={e => setName((e.target as any).value)}
               />
             </div>
           </div>
@@ -63,7 +64,7 @@ export const ImportModal = ({ onClose, onImport, theme }: {
                 className={`w-full ${inputBg} border rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:border-blue-500 transition ${text}`}
                 placeholder="https://..."
                 value={videoUrl}
-                onChange={e => setVideoUrl(e.target.value)}
+                onChange={e => setVideoUrl((e.target as any).value)}
               />
             </div>
           </div>
@@ -77,7 +78,7 @@ export const ImportModal = ({ onClose, onImport, theme }: {
                 className={`w-full ${inputBg} border rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:border-blue-500 transition ${text}`}
                 placeholder="https://... (可选)"
                 value={subtitleUrl}
-                onChange={e => setSubtitleUrl(e.target.value)}
+                onChange={e => setSubtitleUrl((e.target as any).value)}
               />
             </div>
           </div>

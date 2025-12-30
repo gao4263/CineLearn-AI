@@ -14,7 +14,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, theme, s
   const navItems = [
     { id: ViewStates.PLAYER, icon: PlayCircle, label: '正在播放' },
     { id: ViewStates.LIBRARY, icon: FolderOpen, label: '我的剧库' },
-    { id: ViewStates.LEARNING, icon: BookOpen, label: '单词本' },
+    { id: ViewStates.LEARNING, icon: BookOpen, label: '收藏夹' },
     // Placeholder for Community feature shown in image
     { id: 'COMMUNITY', icon: LayoutGrid, label: '剧集社区', disabled: true },
   ];

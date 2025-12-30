@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useMemo } from 'react';
 import { Play, FileText, Plus, Loader2, Film, Folder, FolderPlus, ArrowLeft, MoreVertical, Pencil, Trash2, Home, ChevronRight, Check, X, Globe, Link } from 'lucide-react';
 import { VideoMeta, Folder as FolderType, Theme } from '../types';
@@ -48,7 +49,7 @@ const ImportModal = ({ onClose, onImport, theme }: {
                 className={`w-full ${inputBg} border rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:border-blue-500 transition ${text}`}
                 placeholder="例如: 老友记 S01E03"
                 value={name}
-                onChange={e => setName(e.target.value)}
+                onChange={e => setName((e.target as any).value)}
               />
             </div>
           </div>
@@ -63,7 +64,7 @@ const ImportModal = ({ onClose, onImport, theme }: {
                 className={`w-full ${inputBg} border rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:border-blue-500 transition ${text}`}
                 placeholder="https://..."
                 value={videoUrl}
-                onChange={e => setVideoUrl(e.target.value)}
+                onChange={e => setVideoUrl((e.target as any).value)}
               />
             </div>
           </div>
@@ -77,7 +78,7 @@ const ImportModal = ({ onClose, onImport, theme }: {
                 className={`w-full ${inputBg} border rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:border-blue-500 transition ${text}`}
                 placeholder="https://... (可选)"
                 value={subtitleUrl}
-                onChange={e => setSubtitleUrl(e.target.value)}
+                onChange={e => setSubtitleUrl((e.target as any).value)}
               />
             </div>
           </div>
@@ -110,6 +111,7 @@ type LibraryProps = {
   onMoveItem: (itemId: string, type: 'video' | 'folder', newParentId?: string) => void;
   isProcessing: boolean;
   progress: number;
+  isLoading: boolean;
   theme: Theme;
 };
 
@@ -126,6 +128,7 @@ export const Library: React.FC<LibraryProps> = ({
   onMoveItem,
   isProcessing,
   progress,
+  isLoading,
   theme
 }) => {
   const [currentFolderId, setCurrentFolderId] = useState<string | undefined>(undefined);
@@ -177,7 +180,7 @@ export const Library: React.FC<LibraryProps> = ({
   };
 
   const handleDragStart = (e: React.DragEvent, id: string, type: 'video' | 'folder') => {
-    e.dataTransfer.setData('text/plain', JSON.stringify({ id, type }));
+    (e.dataTransfer as any).setData('text/plain', JSON.stringify({ id, type }));
   };
 
   const handleDragOver = (e: React.DragEvent, folderId: string) => {
@@ -198,7 +201,7 @@ export const Library: React.FC<LibraryProps> = ({
     setIsDragOverFolder(null);
     
     try {
-      const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+      const data = JSON.parse((e.dataTransfer as any).getData('text/plain'));
       if (data.id === targetFolderId) return; 
       onMoveItem(data.id, data.type, targetFolderId);
     } catch (err) {
@@ -207,11 +210,11 @@ export const Library: React.FC<LibraryProps> = ({
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
+    const files = (e.target as any).files;
     if (files) {
-      Array.from(files).forEach(file => onImportFile(file, currentFolderId));
+      Array.from(files).forEach(file => onImportFile(file as any, currentFolderId));
     }
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (fileInputRef.current) (fileInputRef.current as any).value = '';
   };
 
   return (
@@ -254,7 +257,7 @@ export const Library: React.FC<LibraryProps> = ({
                 云端导入
              </button>
              <button 
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => (fileInputRef.current as any)?.click()}
                 disabled={isProcessing}
                 className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition-colors border ${theme === 'dark' ? 'border-gray-700 hover:bg-gray-800' : 'border-gray-300 hover:bg-gray-100'} ${textMain}`}
              >
@@ -271,7 +274,7 @@ export const Library: React.FC<LibraryProps> = ({
             onDragOver={(e) => { e.preventDefault(); }}
             onDrop={(e) => {
               e.preventDefault();
-              const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+              const data = JSON.parse((e.dataTransfer as any).getData('text/plain'));
               onMoveItem(data.id, data.type, undefined);
             }}
           >
@@ -287,7 +290,7 @@ export const Library: React.FC<LibraryProps> = ({
                 onDragOver={(e) => { e.preventDefault(); }}
                 onDrop={(e) => {
                   e.preventDefault();
-                  const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+                  const data = JSON.parse((e.dataTransfer as any).getData('text/plain'));
                   onMoveItem(data.id, data.type, folder.id);
                 }}
               >
@@ -298,20 +301,8 @@ export const Library: React.FC<LibraryProps> = ({
         </div>
       </div>
 
-      {isProcessing && (
-        <div className={`mb-8 ${cardBg} border rounded-xl p-6 flex items-center gap-4 animate-pulse`}>
-           <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-           <div className="flex-1">
-             <h3 className={`font-bold ${textMain} mb-1`}>正在处理视频...</h3>
-             <div className="w-full bg-gray-800 h-2 rounded-full mt-3 overflow-hidden">
-                <div className="bg-blue-600 h-full transition-all duration-300" style={{ width: `${progress}%` }}></div>
-             </div>
-           </div>
-           <span className="font-mono text-blue-500 font-bold">{progress}%</span>
-        </div>
-      )}
-
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+        {/* Creation Input */}
         {isCreatingFolder && (
           <div className={`p-4 rounded-2xl border-2 border-dashed border-blue-500/50 ${folderBg} flex flex-col items-center gap-3 transition-all`}>
              <Folder className="w-12 h-12 text-blue-500 fill-current opacity-90" />
@@ -321,7 +312,7 @@ export const Library: React.FC<LibraryProps> = ({
                   className={`flex-1 text-center bg-transparent border-b border-blue-500 focus:outline-none text-sm ${textMain}`}
                   value={newFolderName}
                   placeholder="文件夹名称..."
-                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onChange={(e) => setNewFolderName((e.target as any).value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleConfirmCreateFolder();
                     if (e.key === 'Escape') setIsCreatingFolder(false);
@@ -335,7 +326,46 @@ export const Library: React.FC<LibraryProps> = ({
           </div>
         )}
 
-        {currentFolders.map((folder) => (
+        {/* Processing Card - Shows when importing/converting */}
+        {isProcessing && (
+          <div className={`group ${cardBg} rounded-2xl overflow-hidden border border-blue-500/50 relative shadow-[0_0_15px_rgba(59,130,246,0.1)]`}>
+            <div className="aspect-video bg-gray-900/50 relative flex items-center justify-center overflow-hidden">
+               <div className="absolute inset-0 bg-gradient-to-tr from-blue-500/5 via-transparent to-blue-500/5 animate-pulse" />
+               
+               <div className="flex flex-col items-center gap-3 z-10 p-4 text-center">
+                 <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+                 <div className="flex flex-col items-center">
+                    <span className="text-xs font-bold text-blue-400 whitespace-nowrap">正在处理视频...</span>
+                    <span className="text-[10px] text-blue-500/70 font-mono mt-1">{progress}%</span>
+                 </div>
+               </div>
+               
+               {/* Progress Bar at bottom */}
+               <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-800">
+                  <div className="h-full bg-blue-500 transition-all duration-300 ease-out shadow-[0_0_10px_rgba(59,130,246,0.5)]" style={{ width: `${progress}%` }} />
+               </div>
+            </div>
+
+            <div className="p-3 space-y-2 opacity-50">
+               <div className="h-4 bg-gray-700/50 rounded w-2/3 animate-pulse" />
+               <div className="h-3 bg-gray-700/30 rounded w-1/2 animate-pulse" />
+            </div>
+          </div>
+        )}
+
+        {/* Loading Skeletons for Initial Load */}
+        {isLoading && Array.from({ length: 8 }).map((_, i) => (
+           <div key={`skel-${i}`} className={`${cardBg} rounded-2xl overflow-hidden border border-transparent`}>
+             <div className="aspect-video bg-gray-800/50 animate-pulse" />
+             <div className="p-3 space-y-2">
+               <div className="h-4 bg-gray-800/50 rounded w-3/4 animate-pulse" />
+               <div className="h-3 bg-gray-800/30 rounded w-1/2 animate-pulse" />
+             </div>
+           </div>
+        ))}
+
+        {/* Loaded Folders */}
+        {!isLoading && currentFolders.map((folder) => (
           <div 
             key={folder.id}
             draggable
@@ -355,7 +385,7 @@ export const Library: React.FC<LibraryProps> = ({
                     autoFocus
                     className={`w-full text-center bg-transparent border-b border-blue-500 focus:outline-none ${textMain}`}
                     value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
+                    onChange={(e) => setEditName((e.target as any).value)}
                     onBlur={() => {
                       if (editName.trim()) onRenameFolder(folder.id, editName);
                       setEditingId(null);
@@ -388,7 +418,7 @@ export const Library: React.FC<LibraryProps> = ({
                <button 
                  onClick={(e) => {
                    e.stopPropagation();
-                   if(confirm('确定要删除这个文件夹及其所有内容吗？')) onDeleteFolder(folder.id);
+                   if(window.confirm('确定要删除这个文件夹及其所有内容吗？')) onDeleteFolder(folder.id);
                  }}
                  className="p-1.5 rounded-lg bg-black/20 hover:bg-red-600 text-white backdrop-blur-sm"
                >
@@ -398,7 +428,8 @@ export const Library: React.FC<LibraryProps> = ({
           </div>
         ))}
 
-        {currentVideos.map((video) => (
+        {/* Loaded Videos */}
+        {!isLoading && currentVideos.map((video) => (
           <div 
             key={video.id} 
             draggable
@@ -436,7 +467,8 @@ export const Library: React.FC<LibraryProps> = ({
           </div>
         ))}
         
-        {currentFolders.length === 0 && currentVideos.length === 0 && !isProcessing && !isCreatingFolder && (
+        {/* Empty State */}
+        {currentFolders.length === 0 && currentVideos.length === 0 && !isProcessing && !isLoading && !isCreatingFolder && (
            <div className={`col-span-full border-2 border-dashed ${theme === 'dark' ? 'border-gray-800' : 'border-gray-300'} rounded-2xl p-12 text-center text-gray-500 flex flex-col items-center justify-center gap-4`}>
              <div className="w-16 h-16 rounded-full bg-gray-100/10 flex items-center justify-center">
                 <Folder className="w-8 h-8 opacity-40" />
