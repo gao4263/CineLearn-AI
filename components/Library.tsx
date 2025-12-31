@@ -1,7 +1,7 @@
-
+/// <reference lib="dom" />
 import React, { useState, useRef, useMemo } from 'react';
-import { Play, FileText, Plus, Loader2, Film, Folder, FolderPlus, ArrowLeft, MoreVertical, Pencil, Trash2, Home, ChevronRight, Check, X, Globe, Link } from 'lucide-react';
-import { VideoMeta, Folder as FolderType, Theme } from '../types';
+import { Play, FileText, Plus, Loader2, Film, Folder, FolderPlus, ArrowLeft, MoreVertical, Pencil, Trash2, Home, ChevronRight, Check, X, Globe, Link as LinkIcon, Sparkles, Captions } from 'lucide-react';
+import { VideoMeta, Folder as FolderType, Theme, CorpusItem } from '../types';
 
 const ImportModal = ({ onClose, onImport, theme }: {
   onClose: () => void;
@@ -57,7 +57,7 @@ const ImportModal = ({ onClose, onImport, theme }: {
           <div>
             <label className="block text-xs font-bold text-gray-500 uppercase mb-1 ml-1">视频 URL (MP4/MKV)</label>
             <div className="relative">
-              <Link className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
+              <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
               <input 
                 required
                 type="url"
@@ -101,7 +101,10 @@ const ImportModal = ({ onClose, onImport, theme }: {
 type LibraryProps = {
   videos: VideoMeta[];
   folders: FolderType[];
+  corpusItems: CorpusItem[];
   onSelect: (video: VideoMeta) => void;
+  onAnalyze: (video: VideoMeta) => void;
+  onDeleteVideo: (id: string) => void;
   onImportDemo: () => void;
   onImportFile: (file: File, folderId?: string) => void;
   onImportCloud: (videoUrl: string, subtitleUrl: string, name: string) => Promise<void>;
@@ -118,7 +121,10 @@ type LibraryProps = {
 export const Library: React.FC<LibraryProps> = ({ 
   videos, 
   folders,
+  corpusItems,
   onSelect, 
+  onAnalyze,
+  onDeleteVideo,
   onImportDemo, 
   onImportFile,
   onImportCloud,
@@ -144,6 +150,15 @@ export const Library: React.FC<LibraryProps> = ({
 
   const currentFolders = useMemo(() => folders.filter(f => f.parentId === currentFolderId), [folders, currentFolderId]);
   const currentVideos = useMemo(() => videos.filter(v => v.parentId === currentFolderId), [videos, currentFolderId]);
+
+  // Pre-calculate corpus counts per video
+  const corpusCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    corpusItems.forEach(item => {
+      counts[item.videoId] = (counts[item.videoId] || 0) + 1;
+    });
+    return counts;
+  }, [corpusItems]);
 
   const breadcrumbs = useMemo(() => {
     const path = [];
@@ -335,7 +350,7 @@ export const Library: React.FC<LibraryProps> = ({
                <div className="flex flex-col items-center gap-3 z-10 p-4 text-center">
                  <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
                  <div className="flex flex-col items-center">
-                    <span className="text-xs font-bold text-blue-400 whitespace-nowrap">正在处理视频...</span>
+                    <span className="text-xs font-bold text-blue-400 whitespace-nowrap">AI 正在分析语料...</span>
                     <span className="text-[10px] text-blue-500/70 font-mono mt-1">{progress}%</span>
                  </div>
                </div>
@@ -418,7 +433,7 @@ export const Library: React.FC<LibraryProps> = ({
                <button 
                  onClick={(e) => {
                    e.stopPropagation();
-                   if(window.confirm('确定要删除这个文件夹及其所有内容吗？')) onDeleteFolder(folder.id);
+                   if(confirm('确定要删除这个文件夹及其所有内容吗？')) onDeleteFolder(folder.id);
                  }}
                  className="p-1.5 rounded-lg bg-black/20 hover:bg-red-600 text-white backdrop-blur-sm"
                >
@@ -429,43 +444,100 @@ export const Library: React.FC<LibraryProps> = ({
         ))}
 
         {/* Loaded Videos */}
-        {!isLoading && currentVideos.map((video) => (
-          <div 
-            key={video.id} 
-            draggable
-            onDragStart={(e) => handleDragStart(e, video.id, 'video')}
-            onClick={() => onSelect(video)}
-            className={`group ${cardBg} rounded-2xl overflow-hidden border hover:border-blue-500/50 cursor-pointer transition-all hover:shadow-xl`}
-          >
-            <div className="aspect-video bg-black relative flex items-center justify-center">
-              {video.thumbnail ? (
-                <img src={video.thumbnail} alt={video.name} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
-              ) : (
-                <div className="text-gray-700">
-                    <Film size={32} />
-                </div>
-              )}
-              
-              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40 backdrop-blur-[2px]">
-                <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center shadow-lg transform scale-90 group-hover:scale-100 transition-transform">
-                  <Play className="fill-white text-white ml-1" size={20} />
-                </div>
-              </div>
-            </div>
+        {!isLoading && currentVideos.map((video) => {
+           const isLocal = video.id.startsWith('local-');
+           const hasSubtitle = !!(video.subtitleUrl || video.path.endsWith('.srt') || video.id.startsWith('demo'));
+           const corpusCount = corpusCounts[video.id] || 0;
+           
+           return (
+            <div 
+              key={video.id} 
+              draggable
+              onDragStart={(e) => handleDragStart(e, video.id, 'video')}
+              onClick={() => onSelect(video)}
+              className={`group ${cardBg} rounded-2xl overflow-hidden border hover:border-blue-500/50 cursor-pointer transition-all hover:shadow-xl relative`}
+            >
+              <div className="aspect-video bg-black relative flex items-center justify-center">
+                {video.thumbnail ? (
+                  <img src={video.thumbnail} alt={video.name} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
+                ) : (
+                  <div className="text-gray-700">
+                      <Film size={32} />
+                  </div>
+                )}
+                
+                {/* Overlay Action Bar */}
+                <div className="absolute top-2 left-2 right-2 flex justify-between items-start z-20 pointer-events-none">
+                   {/* Source Badge (Left) */}
+                   <div className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1.5 ${theme === 'dark' ? 'bg-black/60 text-white' : 'bg-white/80 text-black'} backdrop-blur-md shadow-sm`}>
+                      {isLocal ? <LinkIcon size={10} className="rotate-45" /> : <Globe size={10} />}
+                      {isLocal ? '本地' : '云端'}
+                   </div>
 
-            <div className="p-3">
-              <h3 className={`font-bold text-sm ${textMain} truncate mb-1`}>{video.name}</h3>
-              <div className="flex items-center justify-between text-[10px] text-gray-500">
-                <span className="flex items-center gap-1">
-                  <FileText size={10} /> { (video.id.startsWith('demo') || video.path.includes('.srt') || !!video.subtitleUrl) ? 'SRT' : 'NO SUB' }
-                </span>
-                <span className={`px-1.5 py-0.5 rounded ${theme === 'dark' ? 'bg-gray-800' : 'bg-gray-100'}`}>
-                   {video.season || 'Video'} {video.episode}
-                </span>
+                   {/* Right Side Stack */}
+                   <div className="flex flex-col items-end gap-2 pointer-events-auto">
+                       {/* Status Badges (Always Visible) */}
+                       <div className="flex gap-2">
+                           {hasSubtitle && (
+                             <div className="px-2 py-1.5 rounded-lg bg-green-600/90 text-white text-[10px] font-bold flex items-center gap-1.5 shadow-sm backdrop-blur-md">
+                                <Captions size={12} />
+                                <span>1 字幕</span>
+                             </div>
+                           )}
+
+                           {corpusCount > 0 && (
+                             <div className="px-2 py-1.5 rounded-lg bg-purple-600/90 text-white text-[10px] font-bold flex items-center gap-1.5 shadow-sm backdrop-blur-md animate-in zoom-in">
+                                <Sparkles size={12} />
+                                <span>{corpusCount} 语料</span>
+                             </div>
+                           )}
+                       </div>
+
+                       {/* Action Buttons (Hover Only) */}
+                       <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity translate-x-2 group-hover:translate-x-0 duration-200">
+                           {hasSubtitle && (
+                             <button
+                               onClick={(e) => { e.stopPropagation(); onAnalyze(video); }}
+                               className="w-7 h-7 flex items-center justify-center rounded-lg bg-black/60 hover:bg-purple-600 text-white backdrop-blur-md transition-colors shadow-sm"
+                               title="AI 分析"
+                             >
+                               <Sparkles size={14} />
+                             </button>
+                           )}
+
+                           <button
+                             onClick={(e) => { e.stopPropagation(); onDeleteVideo(video.id); }}
+                             className="w-7 h-7 flex items-center justify-center rounded-lg bg-red-600 hover:bg-red-500 text-white shadow-sm transition-colors"
+                             title="删除"
+                           >
+                             <Trash2 size={14} />
+                           </button>
+                       </div>
+                   </div>
+                </div>
+
+                {/* Play Button Center */}
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center shadow-lg transform scale-0 group-hover:scale-100 transition-transform duration-200">
+                    <Play className="fill-white text-white ml-1" size={24} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-4">
+                <h3 className={`font-bold text-base ${textMain} truncate mb-2`}>{video.name}</h3>
+                <div className="flex items-center justify-between text-xs text-gray-500">
+                  <span className={`px-2 py-1 rounded-full ${theme === 'dark' ? 'bg-gray-800' : 'bg-gray-100'} font-medium`}>
+                     #{isLocal ? '本地文件' : '云端资源'}
+                  </span>
+                  <span className="font-mono opacity-80">
+                     {video.lastPlayedTime > 0 ? new Date(video.lastPlayedTime).toLocaleDateString() : new Date().toLocaleDateString()}
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+           );
+        })}
         
         {/* Empty State */}
         {currentFolders.length === 0 && currentVideos.length === 0 && !isProcessing && !isLoading && !isCreatingFolder && (

@@ -1,13 +1,14 @@
-
-import React, { useState, useEffect } from 'react';
+/// <reference lib="dom" />
+import React, { useState, useEffect, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Player } from './components/Player';
 import { Library } from './components/Library';
 import { LearningView } from './components/LearningView';
-import { ViewState, ViewStates, VideoMeta, Subtitle, SavedWord, SavedSubtitle, Theme, Folder } from './types';
+import { ViewState, ViewStates, VideoMeta, Subtitle, SavedWord, SavedSubtitle, Theme, Folder, CorpusItem } from './types';
 import { parseSRT } from './services/srtParser';
 import { convertMkvToMp4 } from './services/converter';
 import { parseFilename } from './services/metadataParser';
+import { generateCorpusForSubtitle, generateCorpusBatch, lookupWord } from './services/geminiService';
 import Dexie, { Table } from 'dexie';
 
 // --- IndexedDB Setup ---
@@ -22,16 +23,18 @@ class AppDatabase extends Dexie {
   savedWords: Table<SavedWord>;
   savedSubtitles: Table<SavedSubtitle>;
   videoFiles: Table<VideoFile>;
+  corpusItems: Table<CorpusItem>;
 
   constructor() {
     super('CineLearnDB');
     
-    this.version(5).stores({
+    this.version(7).stores({
       videos: 'id, name, parentId',
       folders: 'id, name, parentId',
-      savedWords: 'id, word, videoId',
+      savedWords: 'id, word, videoId, mastered',
       savedSubtitles: 'id, videoId',
-      videoFiles: 'id'
+      videoFiles: 'id',
+      corpusItems: 'id, subtitleId, videoId, type'
     });
 
     this.videos = this.table('videos');
@@ -39,6 +42,7 @@ class AppDatabase extends Dexie {
     this.savedWords = this.table('savedWords');
     this.savedSubtitles = this.table('savedSubtitles');
     this.videoFiles = this.table('videoFiles');
+    this.corpusItems = this.table('corpusItems');
   }
 }
 
@@ -52,6 +56,7 @@ const App: React.FC = () => {
   const [subtitles, setSubtitles] = useState<Subtitle[]>([]);
   const [savedWords, setSavedWords] = useState<SavedWord[]>([]);
   const [savedSubtitles, setSavedSubtitles] = useState<SavedSubtitle[]>([]);
+  const [corpusItems, setCorpusItems] = useState<CorpusItem[]>([]);
   const [theme, setTheme] = useState<Theme>('dark');
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -123,9 +128,17 @@ const App: React.FC = () => {
       setSavedWords(words);
       const subs = await db.savedSubtitles.toArray();
       setSavedSubtitles(subs);
+      const corp = await db.corpusItems.toArray();
+      setCorpusItems(corp);
       setIsLoading(false);
 
-      // Auto-load demo if library is empty
+      // Check for review
+      const unmasteredCount = words.filter(w => !w.mastered && (Date.now() - w.timestamp > 86400000)).length;
+      if (unmasteredCount > 0) {
+        // Simple notification (could be a toast)
+        console.log(`You have ${unmasteredCount} words to review.`);
+      }
+
       if (vids.length === 0) {
         handleImportDemo();
       }
@@ -177,14 +190,14 @@ const App: React.FC = () => {
       let targetFolderId = folderId;
       if (!targetFolderId && parsed.showName) {
          let rootFolder = folders.find(f => f.name.toLowerCase() === parsed.showName.toLowerCase() && !f.parentId);
-         if (!rootFolder && window.confirm(`检测到美剧《${parsed.showName}》，是否为其创建文件夹？`)) {
+         if (!rootFolder && confirm(`检测到美剧《${parsed.showName}》，是否为其创建文件夹？`)) {
             rootFolder = await handleCreateFolder(parsed.showName);
          }
          if (rootFolder) {
             targetFolderId = rootFolder.id;
             if (parsed.season) {
                let seasonFolder = folders.find(f => f.parentId === rootFolder!.id && f.name.includes(parsed.season!));
-               if (!seasonFolder && window.confirm(`创建分季目录：${parsed.season}？`)) {
+               if (!seasonFolder && confirm(`创建分季目录：${parsed.season}？`)) {
                   seasonFolder = await handleCreateFolder(parsed.season, rootFolder.id);
                }
                if (seasonFolder) targetFolderId = seasonFolder.id;
@@ -217,7 +230,7 @@ const App: React.FC = () => {
       setLibrary(vidsWithUrls);
     } catch (error) {
       console.error(error);
-      window.alert("Import failed");
+      alert("Import failed");
     } finally {
       setIsProcessing(false);
     }
@@ -241,9 +254,106 @@ const App: React.FC = () => {
     setView(ViewStates.PLAYER);
   };
 
+  const handleUpdateProgress = useCallback((time: number) => {
+    if (activeVideo) {
+      setActiveVideo(prev => prev ? ({ ...prev, lastPlayedTime: time }) : null);
+      setLibrary(prev => prev.map(v => v.id === activeVideo.id ? { ...v, lastPlayedTime: time } : v));
+      db.videos.update(activeVideo.id, { lastPlayedTime: time });
+    }
+  }, [activeVideo]);
+
+  const handleAnalyzeVideo = async (video: VideoMeta) => {
+    if (!video.subtitleUrl && !video.path.endsWith('.srt')) {
+      alert("No subtitle URL available for this video.");
+      return;
+    }
+
+    setIsProcessing(true);
+    setProgress(0);
+
+    try {
+      let text = '';
+      if (video.subtitleUrl) {
+        const res = await fetch(video.subtitleUrl);
+        text = await res.text();
+      } else {
+        alert("Batch analysis currently supports cloud subtitles or imported demo.");
+        setIsProcessing(false);
+        return;
+      }
+
+      const parsedSubs = parseSRT(text);
+      if (parsedSubs.length === 0) {
+        alert("No subtitles found to analyze.");
+        setIsProcessing(false);
+        return;
+      }
+
+      const batchSize = 20;
+      const chunks = [];
+      for (let i = 0; i < parsedSubs.length; i += batchSize) {
+        chunks.push(parsedSubs.slice(i, i + batchSize));
+      }
+
+      let completedCount = 0;
+      const totalChunks = chunks.length;
+
+      for (const chunk of chunks) {
+         const results = await generateCorpusBatch(chunk, `TV Show: ${video.name}`);
+         
+         if (results && results.length > 0) {
+             const newItems: CorpusItem[] = results.map((item, idx) => ({
+                 id: `corpus-${item.subtitleId || 'unknown'}-${Date.now()}-${idx}`,
+                 subtitleId: item.subtitleId || '',
+                 videoId: video.id,
+                 type: (item.type || 'vocabulary') as any,
+                 content: item.content || '',
+                 anchor: item.anchor || undefined,
+                 timestamp: Date.now()
+             })).filter(item => item.subtitleId !== ''); 
+
+             if (newItems.length > 0) {
+                 await db.corpusItems.bulkAdd(newItems);
+                 setCorpusItems(prev => [...prev, ...newItems]);
+             }
+         }
+
+         completedCount++;
+         setProgress(Math.round((completedCount / totalChunks) * 100));
+         await new Promise(resolve => setTimeout(resolve, 500)); 
+      }
+      
+      alert("Analysis Complete!");
+
+    } catch (e) {
+      console.error("Analysis failed", e);
+      alert("Analysis failed. Check console.");
+    } finally {
+      setIsProcessing(false);
+      setProgress(0);
+    }
+  };
+
   const handleDeleteFolder = async (id: string) => {
     await db.folders.delete(id);
     setFolders(prev => prev.filter(f => f.id !== id));
+  };
+
+  const handleDeleteVideo = async (id: string) => {
+    if (!confirm("确定要删除这个视频吗？")) return;
+    
+    await db.videos.delete(id);
+    await db.videoFiles.delete(id);
+    await db.savedWords.where('videoId').equals(id).delete();
+    await db.savedSubtitles.where('videoId').equals(id).delete();
+    await db.corpusItems.where('videoId').equals(id).delete();
+
+    setLibrary(prev => prev.filter(v => v.id !== id));
+    
+    if (activeVideo?.id === id) {
+       setActiveVideo(null);
+       setView(ViewStates.LIBRARY);
+    }
   };
 
   const handleRenameFolder = async (id: string, name: string) => {
@@ -271,31 +381,114 @@ const App: React.FC = () => {
 
   const handleSaveWord = async (word: string, sub: Subtitle) => {
     if (!activeVideo) return;
+    
+    // Check if duplicate
+    const exists = savedWords.find(w => w.word.toLowerCase() === word.toLowerCase() && w.videoId === activeVideo.id);
+    if (exists) {
+        alert("已添加到生词本");
+        return;
+    }
+
+    // Temporary placeholder while loading
+    const tempId = `word-${Date.now()}`;
     const newWord: SavedWord = {
-      id: `word-${Date.now()}`,
+      id: tempId,
       word: word.trim(),
-      translation: 'Pending...',
+      translation: '查询中...',
       contextSentence: sub.text,
       timestamp: Date.now(),
-      videoId: activeVideo.id
+      videoId: activeVideo.id,
+      subtitleId: sub.id,
+      mastered: false
     };
-    await db.savedWords.add(newWord);
+
     setSavedWords(prev => [...prev, newWord]);
+
+    // Async lookup
+    try {
+        const details = await lookupWord(word, sub.text);
+        const finalWord: SavedWord = {
+            ...newWord,
+            translation: details?.definition || '暂无释义',
+            pronunciation: details?.pronunciation || '',
+            // If details has translation (Chinese), append it
+            contextSentence: sub.text // keep context
+        };
+        // If we got a translation field from AI, maybe append it to definition or store separate?
+        // Using translation field for definition currently based on prompt. 
+        // Let's refine: prompt returns definition (eng), translation (cn).
+        // Map: definition -> translation property? Or combine?
+        // Let's combine: "CN Translation. Eng Definition."
+        if (details) {
+            finalWord.translation = `${details.translation} ${details.definition}`;
+        }
+
+        await db.savedWords.add(finalWord);
+        setSavedWords(prev => prev.map(w => w.id === tempId ? finalWord : w));
+    } catch (e) {
+        await db.savedWords.add(newWord);
+        // Keep "查询中" or set to manual needed
+    }
   };
 
-  const handleSaveSubtitle = async (sub: Subtitle) => {
+  const handleToggleMastered = async (wordId: string) => {
+      const word = savedWords.find(w => w.id === wordId);
+      if (word) {
+          const newVal = !word.mastered;
+          await db.savedWords.update(wordId, { mastered: newVal });
+          setSavedWords(prev => prev.map(w => w.id === wordId ? { ...w, mastered: newVal } : w));
+      }
+  };
+
+  const handleToggleSubtitle = async (sub: Subtitle) => {
     if (!activeVideo) return;
-    const newSub: SavedSubtitle = {
-      id: `saved-sub-${Date.now()}`,
-      text: sub.text,
-      startTime: sub.startTime,
-      endTime: sub.endTime,
-      videoId: activeVideo.id,
-      timestamp: Date.now()
-    };
-    await db.savedSubtitles.add(newSub);
-    setSavedSubtitles(prev => [...prev, newSub]);
-    window.alert("字幕已收藏！"); // Simple feedback
+    
+    // Check if already saved (ID check is robust now with deterministic IDs)
+    const existing = savedSubtitles.find(s => s.id === sub.id);
+    
+    if (existing) {
+       await db.savedSubtitles.delete(existing.id);
+       setSavedSubtitles(prev => prev.filter(s => s.id !== sub.id));
+    } else {
+       const newSub: SavedSubtitle = {
+          id: sub.id,
+          text: sub.text,
+          startTime: sub.startTime,
+          endTime: sub.endTime,
+          videoId: activeVideo.id,
+          timestamp: Date.now()
+       };
+       await db.savedSubtitles.add(newSub);
+       setSavedSubtitles(prev => [...prev, newSub]);
+    }
+  };
+
+  const handleAnalyzeSubtitle = async (sub: Subtitle) => {
+    if (!activeVideo) return;
+    
+    const existing = corpusItems.filter(c => c.subtitleId === sub.id);
+    if (existing.length > 0) return;
+
+    try {
+        const results = await generateCorpusForSubtitle(sub.text, `TV Show: ${activeVideo.name}`);
+        if (results && results.length > 0) {
+            const newItems: CorpusItem[] = results.map((item, idx) => ({
+                id: `corpus-${sub.id}-${idx}-${Date.now()}`,
+                subtitleId: sub.id,
+                videoId: activeVideo.id,
+                type: (item.type || 'vocabulary') as any,
+                content: item.content || '',
+                anchor: item.anchor || undefined,
+                timestamp: Date.now()
+            }));
+            
+            await db.corpusItems.bulkAdd(newItems);
+            setCorpusItems(prev => [...prev, ...newItems]);
+        }
+    } catch (e) {
+        console.error("Failed to analyze subtitle", e);
+        alert("AI 分析失败，请检查网络或 Key");
+    }
   };
 
   return (
@@ -313,7 +506,10 @@ const App: React.FC = () => {
           <Library 
             videos={library}
             folders={folders} 
+            corpusItems={corpusItems}
             onSelect={handleVideoSelect} 
+            onAnalyze={handleAnalyzeVideo}
+            onDeleteVideo={handleDeleteVideo}
             onImportDemo={handleImportDemo}
             onImportFile={handleImportFile}
             onImportCloud={handleImportCloud}
@@ -332,8 +528,12 @@ const App: React.FC = () => {
           <Player 
             video={activeVideo} 
             subtitles={subtitles} 
+            savedSubtitles={savedSubtitles}
             onWordSave={handleSaveWord}
-            onSubtitleSave={handleSaveSubtitle}
+            onToggleSubtitle={handleToggleSubtitle}
+            onAnalyzeSubtitle={handleAnalyzeSubtitle}
+            onUpdateProgress={handleUpdateProgress}
+            corpusItems={corpusItems}
             theme={theme}
           />
         )}
@@ -341,13 +541,30 @@ const App: React.FC = () => {
         {view === ViewStates.LEARNING && (
           <LearningView 
             savedItems={savedWords} 
-            onDelete={async (id) => {
-               await db.savedWords.delete(id);
-               setSavedWords(prev => prev.filter(w => w.id !== id));
+            savedSubtitles={savedSubtitles}
+            corpusItems={corpusItems}
+            videos={library}
+            folders={folders}
+            onDelete={async (id, type) => {
+               if (type === 'saved') {
+                   await db.savedWords.delete(id);
+                   setSavedWords(prev => prev.filter(w => w.id !== id));
+               } else if (type === 'subtitle') {
+                   await db.savedSubtitles.delete(id);
+                   setSavedSubtitles(prev => prev.filter(s => s.id !== id));
+               } else {
+                   await db.corpusItems.delete(id);
+                   setCorpusItems(prev => prev.filter(c => c.id !== id));
+               }
             }}
-            onReview={(vid) => {
+            onToggleMastered={handleToggleMastered}
+            onReview={(vid, time) => {
                const v = library.find(x => x.id === vid);
-               if (v) handleVideoSelect(v);
+               if (v) {
+                   // Ensure we pass a new object with the precise timestamp to trigger the Player's seeking effect
+                   const targetVideo = { ...v, lastPlayedTime: time };
+                   handleVideoSelect(targetVideo);
+               }
             }}
             theme={theme}
           />

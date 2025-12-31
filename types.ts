@@ -33,6 +33,7 @@ export type CorpusItem = {
   videoId: string;
   type: 'vocabulary' | 'grammar' | 'culture';
   content: string; // HTML or Markdown content
+  anchor?: string; // The specific text in the subtitle this item refers to
   timestamp: number;
 };
 
@@ -40,9 +41,12 @@ export type SavedWord = {
   id: string;
   word: string;
   translation: string;
+  pronunciation?: string; // IPA
   contextSentence: string;
   timestamp: number;
   videoId: string;
+  subtitleId?: string;
+  mastered?: boolean;
 };
 
 export type SavedSubtitle = {

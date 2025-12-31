@@ -52,10 +52,15 @@ export const parseSRT = (data: string): Subtitle[] => {
           .join('\n');
 
         if (cleanedText) {
+          const startTime = timeStringToSeconds(timeMatch[1]);
+          // Deterministic ID based on index and start time to ensure consistency across reloads
+          // replacing . with - for simpler IDs
+          const stableId = `sub-${index}_${startTime.toString().replace('.', '-')}`;
+          
           subtitles.push({
-            id: `sub-${index}-${Date.now()}`,
+            id: stableId,
             index: index + 1,
-            startTime: timeStringToSeconds(timeMatch[1]),
+            startTime: startTime,
             endTime: timeStringToSeconds(timeMatch[2]),
             text: cleanedText,
           });
