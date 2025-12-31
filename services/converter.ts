@@ -8,6 +8,11 @@ let conversionQueue = Promise.resolve();
 export const initFFmpeg = async () => {
   if (ffmpeg.loaded) return;
   
+  // Check browser environment for WASM compatibility
+  if (!window.crossOriginIsolated) {
+    throw new Error("Browser not Cross-Origin Isolated. FFmpeg WASM cannot run. Video will try to play directly.");
+  }
+
   // Use version matching the package.json/importmap to avoid compatibility issues
   const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm';
   
@@ -18,7 +23,7 @@ export const initFFmpeg = async () => {
     });
   } catch (error) {
     console.error("Failed to load FFmpeg:", error);
-    throw error;
+    throw new Error("FFmpeg load failed: " + (error instanceof Error ? error.message : "Unknown error"));
   }
 };
 
@@ -41,10 +46,8 @@ export const convertMkvToMp4 = (
       await ffmpeg.writeFile(inputName, await fetchFile(file));
 
       // Run FFmpeg command
-      // -i input.mkv: Input file
       // -c:v copy: Copy video stream (remuxing is much faster than transcoding)
-      // -c:a aac: Convert audio to AAC
-      // -ac 2: Downmix to Stereo (Fixes 5.1 channel silence issues in browsers)
+      // -c:a aac: Convert audio to AAC (often needed for browser playback)
       await ffmpeg.exec(['-i', inputName, '-c:v', 'copy', '-c:a', 'aac', '-ac', '2', outputName]);
 
       // Read the result
@@ -53,15 +56,18 @@ export const convertMkvToMp4 = (
       // Return as Blob
       return new Blob([data], { type: 'video/mp4' });
     } catch (e) {
-      console.error("Conversion error details:", e);
-      throw new Error("Failed to convert video: " + (e instanceof Error ? e.message : String(e)));
+      console.warn("Conversion skipped/failed:", e);
+      // Re-throw to let App.tsx handle the fallback
+      throw e;
     } finally {
-      // Clean up files from memory to prevent leaks
-      try {
-        await ffmpeg.deleteFile('input.mkv');
-        await ffmpeg.deleteFile('output.mp4');
-      } catch (e) {
-        // Ignore cleanup errors if files don't exist
+      // Clean up files
+      if (ffmpeg.loaded) {
+          try {
+            await ffmpeg.deleteFile('input.mkv');
+            await ffmpeg.deleteFile('output.mp4');
+          } catch (e) {
+            // Ignore cleanup errors
+          }
       }
     }
   };
@@ -69,7 +75,7 @@ export const convertMkvToMp4 = (
   // Chain the task to the queue
   const result = conversionQueue.then(task);
   
-  // Update the queue to wait for this task (ignoring errors so queue persists)
+  // Update the queue to wait for this task
   conversionQueue = result.then(() => {}).catch(() => {});
   
   return result;

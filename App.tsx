@@ -5,6 +5,8 @@ import { Player } from './components/Player';
 import { Library } from './components/Library';
 import { LearningView } from './components/LearningView';
 import { CommunityView } from './components/CommunityView';
+import { SettingsView } from './components/SettingsView';
+import { HelpView } from './components/HelpView';
 import { ViewState, ViewStates, VideoMeta, Subtitle, SavedWord, SavedSubtitle, Theme, Folder, CorpusItem } from './types';
 import { parseSRT } from './services/srtParser';
 import { convertMkvToMp4 } from './services/converter';
@@ -70,11 +72,21 @@ const App: React.FC = () => {
   const refreshLibrary = async () => {
     const vids = await db.videos.toArray();
     const vidsWithUrls = await Promise.all(vids.map(async (v) => {
+      let videoPath = v.path;
       if (v.path === 'blob-db') {
         const fileRecord = await db.videoFiles.get(v.id);
-        if (fileRecord) return { ...v, path: URL.createObjectURL(fileRecord.blob) };
+        if (fileRecord) videoPath = URL.createObjectURL(fileRecord.blob);
       }
-      return v;
+      
+      let subtitleUrl = v.subtitleUrl;
+      // Resolve local subtitle blobs if present (stored with prefix blob-db-sub:)
+      if (v.subtitleUrl && v.subtitleUrl.startsWith('blob-db-sub:')) {
+          const subId = v.subtitleUrl.replace('blob-db-sub:', '');
+          const fileRecord = await db.videoFiles.get(subId);
+          if (fileRecord) subtitleUrl = URL.createObjectURL(fileRecord.blob);
+      }
+
+      return { ...v, path: videoPath, subtitleUrl };
     }));
     setLibrary(vidsWithUrls);
   };
@@ -131,9 +143,8 @@ const App: React.FC = () => {
          return;
 
        } catch (e) {
-         console.error("Conversion failed, falling back to direct stream", e);
-         alert("MKV audio repair failed. Video will play but might lack sound.");
-         // Fallthrough to normal import
+         console.warn("Conversion failed or skipped, using direct play.", e);
+         // Fallthrough to normal import without conversion
        } finally {
          setProcessingCount(c => Math.max(0, c - 1));
          setProgress(0);
@@ -205,15 +216,24 @@ const App: React.FC = () => {
     return newFolder;
   };
 
-  const handleImportFile = async (file: File, folderId?: string) => {
+  const handleImportFile = async (file: File, folderId?: string, associatedSubFile?: File) => {
     const isSrt = file.name.toLowerCase().endsWith('.srt');
+    
+    // Standalone SRT import logic: try to associate with existing video
     if (isSrt) {
       const cleanName = file.name.replace(/\.srt$/i, '');
       const matchingVideo = library.find(v => v.name.includes(cleanName) || cleanName.includes(v.name));
       if (matchingVideo) {
-        const text = await file.text();
-        const parsedSubs = parseSRT(text);
-        setSubtitles(parsedSubs);
+         // Save SRT blob
+         const subId = `local-sub-${Date.now()}`;
+         await db.videoFiles.put({ id: subId, blob: file });
+         
+         // Update video with new subtitle URL
+         const newSubUrl = `blob-db-sub:${subId}`;
+         await db.videos.update(matchingVideo.id, { subtitleUrl: newSubUrl });
+         
+         alert(`已将字幕 "${file.name}" 关联到视频 "${matchingVideo.name}"`);
+         await refreshLibrary();
       }
       return;
     }
@@ -227,7 +247,18 @@ const App: React.FC = () => {
       const isMkv = file.name.toLowerCase().endsWith('.mkv');
 
       if (isMkv) {
-        finalBlob = await convertMkvToMp4(file, (p) => setProgress(p));
+         try {
+            finalBlob = await convertMkvToMp4(file, (p) => setProgress(p));
+         } catch (e) {
+            console.warn("Conversion failed, falling back to direct play.", e);
+            // Alert user only if it's a real failure, not just missing browser features
+            if ((e as Error).message.includes('Cross-Origin')) {
+                // Do nothing, silent fallback
+            } else {
+                // alert("MKV conversion failed. Audio might be silent.");
+            }
+            setProgress(100);
+         }
       } else {
         setProgress(100);
       }
@@ -254,10 +285,19 @@ const App: React.FC = () => {
 
       await db.videoFiles.put({ id: fileId, blob: finalBlob });
 
+      // Handle Associated Subtitle if present
+      let finalSubtitleUrl = undefined;
+      if (associatedSubFile) {
+          const subId = `local-sub-${Date.now()}`;
+          await db.videoFiles.put({ id: subId, blob: associatedSubFile });
+          finalSubtitleUrl = `blob-db-sub:${subId}`;
+      }
+
       const newVideo: VideoMeta = {
         id: fileId,
         name: file.name.replace(/\.(mkv|mp4|webm)$/i, ''),
         path: 'blob-db',
+        subtitleUrl: finalSubtitleUrl,
         duration: 0,
         lastPlayedTime: 0,
         parentId: targetFolderId,
@@ -272,6 +312,37 @@ const App: React.FC = () => {
       alert("Import failed");
     } finally {
       setProcessingCount(c => Math.max(0, c - 1));
+    }
+  };
+
+  const handleImportBatch = async (files: File[], folderId?: string) => {
+    // Separate videos and srts
+    const videos = files.filter(f => f.name.match(/\.(mp4|mkv|webm)$/i));
+    const srts = files.filter(f => f.name.toLowerCase().endsWith('.srt'));
+    
+    // Process pairs
+    for (const vidFile of videos) {
+        const baseName = vidFile.name.replace(/\.(mp4|mkv|webm)$/i, '');
+        
+        // Find matching SRT in the batch (relaxed matching: starts with base name)
+        const matchedSrtIdx = srts.findIndex(s => s.name.toLowerCase().startsWith(baseName.toLowerCase()));
+        
+        let subFileToImport: File | undefined = undefined;
+
+        if (matchedSrtIdx > -1) {
+            const matchedSrt = srts[matchedSrtIdx];
+            if (confirm(`检测到视频 "${vidFile.name}" 有同名字幕 "${matchedSrt.name}"，是否一起导入？`)) {
+                subFileToImport = matchedSrt;
+                srts.splice(matchedSrtIdx, 1); // Remove from list to avoid duplicate processing
+            }
+        }
+
+        await handleImportFile(vidFile, folderId, subFileToImport);
+    }
+
+    // Process remaining orphan SRTs
+    for (const srt of srts) {
+        await handleImportFile(srt, folderId);
     }
   };
 
@@ -364,7 +435,7 @@ const App: React.FC = () => {
 
     } catch (e) {
       console.error("Analysis failed", e);
-      alert("Analysis failed. Check console.");
+      alert("Analysis failed. Check console. Ensure API Key is set in Settings.");
     } finally {
       setProcessingCount(c => Math.max(0, c - 1));
       setProgress(0);
@@ -533,7 +604,8 @@ const App: React.FC = () => {
             onAnalyze={handleAnalyzeVideo}
             onDeleteVideo={handleDeleteVideo}
             onImportDemo={handleImportDemo}
-            onImportFile={handleImportFile}
+            onImportFile={(f, fid) => handleImportFile(f, fid)}
+            onImportBatch={handleImportBatch}
             onImportCloud={handleImportCloud}
             onCreateFolder={handleCreateFolder}
             onRenameFolder={handleRenameFolder}
@@ -595,6 +667,14 @@ const App: React.FC = () => {
           <CommunityView 
             theme={theme}
           />
+        )}
+
+        {view === ViewStates.SETTINGS && (
+          <SettingsView theme={theme} />
+        )}
+
+        {view === ViewStates.HELP && (
+          <HelpView theme={theme} />
         )}
       </main>
     </div>

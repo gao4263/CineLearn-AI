@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutGrid, PlayCircle, BookOpen, HelpCircle, Power, FolderOpen, Film } from 'lucide-react';
+import { LayoutGrid, PlayCircle, BookOpen, HelpCircle, Power, FolderOpen, Film, Settings } from 'lucide-react';
 import { ViewState, ViewStates, Theme } from '../types';
 
 type SidebarProps = {
@@ -57,10 +57,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, theme, s
           );
         })}
 
-        <button className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl ${textColor} hover:text-gray-200 mt-4`}>
-          <HelpCircle size={20} />
-          <span>使用帮助</span>
-        </button>
+        <div className="pt-4 mt-2 border-t border-gray-800/50">
+           <button 
+             onClick={() => setView(ViewStates.SETTINGS)}
+             className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl ${currentView === ViewStates.SETTINGS ? activeText : textColor} hover:text-gray-200`}
+           >
+            <Settings size={20} />
+            <span>AI 设置</span>
+          </button>
+          <button 
+             onClick={() => setView(ViewStates.HELP)}
+             className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl ${currentView === ViewStates.HELP ? activeText : textColor} hover:text-gray-200`}
+          >
+            <HelpCircle size={20} />
+            <span>使用帮助</span>
+          </button>
+        </div>
       </nav>
 
       {/* Bottom Widgets */}
@@ -83,20 +95,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, theme, s
                 <div className="w-3 h-3 rounded-full bg-current" />
               </button>
            </div>
-        </div>
-
-        {/* Daily Goal Widget */}
-        <div className={`rounded-2xl p-4 ${theme === 'dark' ? 'bg-[#161b26] border border-gray-800' : 'bg-white border border-gray-200 shadow-sm'}`}>
-          <div className="flex justify-between items-center mb-2">
-            <span className={`text-xs font-bold text-blue-500`}>每日目标</span>
-          </div>
-          <div className={`text-sm font-medium mb-3 ${theme === 'dark' ? 'text-gray-200' : 'text-gray-800'}`}>
-            12/20 分钟
-            <span className="float-right text-blue-500">60%</span>
-          </div>
-          <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
-            <div className="h-full bg-blue-600 w-3/5 rounded-full" />
-          </div>
         </div>
 
         {/* User Profile */}

@@ -1,3 +1,4 @@
+
 /// <reference lib="dom" />
 import React, { useState, useRef, useMemo } from 'react';
 import { Play, FileText, Plus, Loader2, Film, Folder, FolderPlus, ArrowLeft, MoreVertical, Pencil, Trash2, Home, ChevronRight, Check, X, Globe, Link as LinkIcon, Sparkles, Captions } from 'lucide-react';
@@ -107,6 +108,7 @@ type LibraryProps = {
   onDeleteVideo: (id: string) => void;
   onImportDemo: () => void;
   onImportFile: (file: File, folderId?: string) => void;
+  onImportBatch: (files: File[], folderId?: string) => void;
   onImportCloud: (videoUrl: string, subtitleUrl: string, name: string) => Promise<void>;
   onCreateFolder: (name: string, parentId?: string) => void;
   onRenameFolder: (id: string, name: string) => void;
@@ -127,6 +129,7 @@ export const Library: React.FC<LibraryProps> = ({
   onDeleteVideo,
   onImportDemo, 
   onImportFile,
+  onImportBatch,
   onImportCloud,
   onCreateFolder,
   onRenameFolder,
@@ -210,30 +213,41 @@ export const Library: React.FC<LibraryProps> = ({
     setIsDragOverFolder(null);
   };
 
-  const handleDrop = (e: React.DragEvent, targetFolderId: string) => {
+  const handleDrop = (e: React.DragEvent, targetFolderId?: string) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragOverFolder(null);
+
+    // Check if files are dropped
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+       const files = Array.from(e.dataTransfer.files);
+       onImportBatch(files, targetFolderId);
+       return;
+    }
     
+    // Handle internal move
     try {
       const data = JSON.parse((e.dataTransfer as any).getData('text/plain'));
       if (data.id === targetFolderId) return; 
       onMoveItem(data.id, data.type, targetFolderId);
     } catch (err) {
-      console.error("Drop failed", err);
+      // Ignore
     }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = (e.target as any).files;
-    if (files) {
-      Array.from(files).forEach(file => onImportFile(file as any, currentFolderId));
+    if (files && files.length > 0) {
+      onImportBatch(Array.from(files), currentFolderId);
     }
     if (fileInputRef.current) (fileInputRef.current as any).value = '';
   };
 
   return (
-    <div className={`flex-1 ${bgMain} p-8 overflow-y-auto flex flex-col`}>
+    <div className={`flex-1 ${bgMain} p-8 overflow-y-auto flex flex-col`}
+         onDragOver={(e) => e.preventDefault()}
+         onDrop={(e) => handleDrop(e, currentFolderId)}
+    >
       {showImportModal && (
         <ImportModal 
           onClose={() => setShowImportModal(false)}
@@ -287,11 +301,7 @@ export const Library: React.FC<LibraryProps> = ({
             onClick={() => setCurrentFolderId(undefined)}
             className={`flex items-center gap-1 hover:text-blue-500 transition ${!currentFolderId ? 'text-blue-500 font-bold' : ''}`}
             onDragOver={(e) => { e.preventDefault(); }}
-            onDrop={(e) => {
-              e.preventDefault();
-              const data = JSON.parse((e.dataTransfer as any).getData('text/plain'));
-              onMoveItem(data.id, data.type, undefined);
-            }}
+            onDrop={(e) => handleDrop(e, undefined)}
           >
             <Home size={14} />
             根目录
@@ -303,11 +313,7 @@ export const Library: React.FC<LibraryProps> = ({
                 onClick={() => setCurrentFolderId(folder.id)}
                 className={`hover:text-blue-500 transition ${idx === breadcrumbs.length - 1 ? 'text-blue-500 font-bold' : ''}`}
                 onDragOver={(e) => { e.preventDefault(); }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const data = JSON.parse((e.dataTransfer as any).getData('text/plain'));
-                  onMoveItem(data.id, data.type, folder.id);
-                }}
+                onDrop={(e) => handleDrop(e, folder.id)}
               >
                 {folder.name}
               </button>
@@ -316,7 +322,7 @@ export const Library: React.FC<LibraryProps> = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 pb-20">
         {/* Creation Input */}
         {isCreatingFolder && (
           <div className={`p-4 rounded-2xl border-2 border-dashed border-blue-500/50 ${folderBg} flex flex-col items-center gap-3 transition-all`}>
@@ -547,7 +553,7 @@ export const Library: React.FC<LibraryProps> = ({
              </div>
              <div>
                <h3 className={`text-lg font-medium ${textMain}`}>此文件夹为空</h3>
-               <p className="text-sm opacity-70">导入本地视频或云端资源</p>
+               <p className="text-sm opacity-70">导入本地视频或云端资源，或者拖入文件夹</p>
              </div>
              <div className="flex gap-4">
                 <button onClick={handleStartCreateFolder} className="text-blue-500 hover:text-blue-400 font-medium text-sm">新建文件夹</button>

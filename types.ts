@@ -63,8 +63,19 @@ export const ViewStates = {
   PLAYER: 'PLAYER',
   LEARNING: 'LEARNING',
   COMMUNITY: 'COMMUNITY',
+  SETTINGS: 'SETTINGS',
+  HELP: 'HELP'
 } as const;
 
 export type ViewState = (typeof ViewStates)[keyof typeof ViewStates];
 
 export type Theme = 'dark' | 'light';
+
+export type AIProvider = 'gemini' | 'deepseek' | 'qwen' | 'openai';
+
+export type AIConfig = {
+  provider: AIProvider;
+  apiKey: string;
+  baseUrl?: string;
+  model?: string;
+};
