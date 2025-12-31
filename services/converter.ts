@@ -10,13 +10,14 @@ export const initFFmpeg = async () => {
   if (ffmpeg.loaded) return;
   
   // Check browser environment for WASM compatibility
-  // For Electron, ensure 'Cross-Origin-Opener-Policy' and 'Cross-Origin-Embedder-Policy' headers are set in the main process.
+  // In Electron, we set the headers in main.ts, so this should pass.
   if (!window.crossOriginIsolated) {
     console.warn("Browser not Cross-Origin Isolated. FFmpeg WASM might be slower or fail to use threads.");
   }
 
-  // Use version matching the package.json/importmap. 
-  // In a real Electron build, these files should be downloaded and served locally to work offline.
+  // NOTE: For a fully offline Electron app, you should download these files,
+  // place them in the 'public' folder, and point to them like: './ffmpeg-core.js'
+  // For now, we keep the CDN for ease of setup, but it requires internet.
   const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm';
   
   try {
