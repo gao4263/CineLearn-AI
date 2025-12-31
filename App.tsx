@@ -4,6 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { Player } from './components/Player';
 import { Library } from './components/Library';
 import { LearningView } from './components/LearningView';
+import { CommunityView } from './components/CommunityView';
 import { ViewState, ViewStates, VideoMeta, Subtitle, SavedWord, SavedSubtitle, Theme, Folder, CorpusItem } from './types';
 import { parseSRT } from './services/srtParser';
 import { convertMkvToMp4 } from './services/converter';
@@ -58,9 +59,25 @@ const App: React.FC = () => {
   const [savedSubtitles, setSavedSubtitles] = useState<SavedSubtitle[]>([]);
   const [corpusItems, setCorpusItems] = useState<CorpusItem[]>([]);
   const [theme, setTheme] = useState<Theme>('dark');
-  const [isProcessing, setIsProcessing] = useState(false);
+  
+  // Changed isProcessing to processingCount to handle multiple concurrent ops correctly
+  const [processingCount, setProcessingCount] = useState(0);
+  const isProcessing = processingCount > 0;
+  
   const [progress, setProgress] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+
+  const refreshLibrary = async () => {
+    const vids = await db.videos.toArray();
+    const vidsWithUrls = await Promise.all(vids.map(async (v) => {
+      if (v.path === 'blob-db') {
+        const fileRecord = await db.videoFiles.get(v.id);
+        if (fileRecord) return { ...v, path: URL.createObjectURL(fileRecord.blob) };
+      }
+      return v;
+    }));
+    setLibrary(vidsWithUrls);
+  };
 
   const handleImportCloud = async (videoUrl: string, subtitleUrl: string, name: string) => {
     const parsed = parseFilename(name);
@@ -77,6 +94,52 @@ const App: React.FC = () => {
       }
     }
 
+    // Check for MKV
+    const isMkv = videoUrl.toLowerCase().endsWith('.mkv') || videoUrl.toLowerCase().includes('.mkv?');
+    
+    if (isMkv) {
+       try {
+         setProcessingCount(c => c + 1);
+         setProgress(1); 
+         
+         // Download Cloud File
+         const res = await fetch(videoUrl);
+         if (!res.ok) throw new Error("Failed to download cloud file");
+         const blob = await res.blob();
+         
+         // Convert Locally
+         const mp4Blob = await convertMkvToMp4(blob, (p) => setProgress(p));
+         
+         // Save as Local File
+         const fileId = `cloud-conv-${Date.now()}`;
+         await db.videoFiles.put({ id: fileId, blob: mp4Blob });
+
+         const newVideo: VideoMeta = {
+            id: fileId,
+            name: name,
+            path: 'blob-db',
+            subtitleUrl: subtitleUrl || undefined,
+            duration: 0,
+            lastPlayedTime: 0,
+            parentId: targetParentId,
+            season: parsed.season,
+            episode: parsed.episode
+         };
+         
+         await db.videos.put(newVideo);
+         await refreshLibrary();
+         return;
+
+       } catch (e) {
+         console.error("Conversion failed, falling back to direct stream", e);
+         alert("MKV audio repair failed. Video will play but might lack sound.");
+         // Fallthrough to normal import
+       } finally {
+         setProcessingCount(c => Math.max(0, c - 1));
+         setProgress(0);
+       }
+    }
+
     const newVideo: VideoMeta = {
       id: `cloud-${Date.now()}`,
       name: name,
@@ -90,15 +153,7 @@ const App: React.FC = () => {
     };
 
     await db.videos.put(newVideo);
-    const updatedLibrary = await db.videos.toArray();
-    const vidsWithUrls = await Promise.all(updatedLibrary.map(async (v) => {
-      if (v.path === 'blob-db') {
-        const fileRecord = await db.videoFiles.get(v.id);
-        if (fileRecord) return { ...v, path: URL.createObjectURL(fileRecord.blob) };
-      }
-      return v;
-    }));
-    setLibrary(vidsWithUrls);
+    await refreshLibrary();
   };
 
   const handleImportDemo = async () => {
@@ -112,17 +167,9 @@ const App: React.FC = () => {
   useEffect(() => {
     const loadData = async () => {
       setIsLoading(true);
-      const vids = await db.videos.toArray();
-      const flds = await db.folders.toArray();
-      const vidsWithUrls = await Promise.all(vids.map(async (v) => {
-        if (v.path === 'blob-db') {
-          const fileRecord = await db.videoFiles.get(v.id);
-          if (fileRecord) return { ...v, path: URL.createObjectURL(fileRecord.blob) };
-        }
-        return v;
-      }));
+      await refreshLibrary();
       
-      setLibrary(vidsWithUrls);
+      const flds = await db.folders.toArray();
       setFolders(flds);
       const words = await db.savedWords.toArray();
       setSavedWords(words);
@@ -132,14 +179,14 @@ const App: React.FC = () => {
       setCorpusItems(corp);
       setIsLoading(false);
 
-      // Check for review
       const unmasteredCount = words.filter(w => !w.mastered && (Date.now() - w.timestamp > 86400000)).length;
       if (unmasteredCount > 0) {
-        // Simple notification (could be a toast)
         console.log(`You have ${unmasteredCount} words to review.`);
       }
 
-      if (vids.length === 0) {
+      // We check db.videos directly here to avoid race condition with state
+      const existingVideos = await db.videos.count();
+      if (existingVideos === 0) {
         handleImportDemo();
       }
     };
@@ -171,7 +218,7 @@ const App: React.FC = () => {
       return;
     }
 
-    setIsProcessing(true);
+    setProcessingCount(c => c + 1);
     setProgress(0);
 
     try {
@@ -210,7 +257,7 @@ const App: React.FC = () => {
       const newVideo: VideoMeta = {
         id: fileId,
         name: file.name.replace(/\.(mkv|mp4|webm)$/i, ''),
-        path: URL.createObjectURL(finalBlob),
+        path: 'blob-db',
         duration: 0,
         lastPlayedTime: 0,
         parentId: targetFolderId,
@@ -218,21 +265,13 @@ const App: React.FC = () => {
         episode: parsed.episode
       };
 
-      await db.videos.put({ ...newVideo, path: 'blob-db' });
-      const updatedLibrary = await db.videos.toArray();
-      const vidsWithUrls = await Promise.all(updatedLibrary.map(async (v) => {
-        if (v.path === 'blob-db') {
-          const fileRecord = await db.videoFiles.get(v.id);
-          if (fileRecord) return { ...v, path: URL.createObjectURL(fileRecord.blob) };
-        }
-        return v;
-      }));
-      setLibrary(vidsWithUrls);
+      await db.videos.put(newVideo);
+      await refreshLibrary();
     } catch (error) {
       console.error(error);
       alert("Import failed");
     } finally {
-      setIsProcessing(false);
+      setProcessingCount(c => Math.max(0, c - 1));
     }
   };
 
@@ -268,7 +307,7 @@ const App: React.FC = () => {
       return;
     }
 
-    setIsProcessing(true);
+    setProcessingCount(c => c + 1);
     setProgress(0);
 
     try {
@@ -278,14 +317,12 @@ const App: React.FC = () => {
         text = await res.text();
       } else {
         alert("Batch analysis currently supports cloud subtitles or imported demo.");
-        setIsProcessing(false);
         return;
       }
 
       const parsedSubs = parseSRT(text);
       if (parsedSubs.length === 0) {
         alert("No subtitles found to analyze.");
-        setIsProcessing(false);
         return;
       }
 
@@ -329,7 +366,7 @@ const App: React.FC = () => {
       console.error("Analysis failed", e);
       alert("Analysis failed. Check console.");
     } finally {
-      setIsProcessing(false);
+      setProcessingCount(c => Math.max(0, c - 1));
       setProgress(0);
     }
   };
@@ -364,15 +401,7 @@ const App: React.FC = () => {
   const handleMoveItem = async (id: string, type: 'video' | 'folder', pid?: string) => {
     if (type === 'video') {
       await db.videos.update(id, { parentId: pid });
-      const updatedLibrary = await db.videos.toArray();
-      const vidsWithUrls = await Promise.all(updatedLibrary.map(async (v) => {
-        if (v.path === 'blob-db') {
-          const fileRecord = await db.videoFiles.get(v.id);
-          if (fileRecord) return { ...v, path: URL.createObjectURL(fileRecord.blob) };
-        }
-        return v;
-      }));
-      setLibrary(vidsWithUrls);
+      await refreshLibrary();
     } else {
       await db.folders.update(id, { parentId: pid });
       setFolders(prev => prev.map(f => f.id === id ? { ...f, parentId: pid } : f));
@@ -411,14 +440,8 @@ const App: React.FC = () => {
             ...newWord,
             translation: details?.definition || '暂无释义',
             pronunciation: details?.pronunciation || '',
-            // If details has translation (Chinese), append it
-            contextSentence: sub.text // keep context
+            contextSentence: sub.text 
         };
-        // If we got a translation field from AI, maybe append it to definition or store separate?
-        // Using translation field for definition currently based on prompt. 
-        // Let's refine: prompt returns definition (eng), translation (cn).
-        // Map: definition -> translation property? Or combine?
-        // Let's combine: "CN Translation. Eng Definition."
         if (details) {
             finalWord.translation = `${details.translation} ${details.definition}`;
         }
@@ -427,7 +450,6 @@ const App: React.FC = () => {
         setSavedWords(prev => prev.map(w => w.id === tempId ? finalWord : w));
     } catch (e) {
         await db.savedWords.add(newWord);
-        // Keep "查询中" or set to manual needed
     }
   };
 
@@ -561,11 +583,16 @@ const App: React.FC = () => {
             onReview={(vid, time) => {
                const v = library.find(x => x.id === vid);
                if (v) {
-                   // Ensure we pass a new object with the precise timestamp to trigger the Player's seeking effect
                    const targetVideo = { ...v, lastPlayedTime: time };
                    handleVideoSelect(targetVideo);
                }
             }}
+            theme={theme}
+          />
+        )}
+
+        {view === ViewStates.COMMUNITY && (
+          <CommunityView 
             theme={theme}
           />
         )}

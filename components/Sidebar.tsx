@@ -15,8 +15,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, theme, s
     { id: ViewStates.PLAYER, icon: PlayCircle, label: '正在播放' },
     { id: ViewStates.LIBRARY, icon: FolderOpen, label: '我的剧库' },
     { id: ViewStates.LEARNING, icon: BookOpen, label: '语料库' },
-    // Placeholder for Community feature shown in image
-    { id: 'COMMUNITY', icon: LayoutGrid, label: '剧集社区', disabled: true },
+    { id: ViewStates.COMMUNITY, icon: LayoutGrid, label: '剧集社区' },
   ];
 
   const bgColor = theme === 'dark' ? 'bg-[#0f1218]' : 'bg-white';
@@ -43,13 +42,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, theme, s
           return (
             <button
               key={item.id}
-              onClick={() => !item.disabled && setView(item.id as ViewState)}
-              disabled={item.disabled}
+              onClick={() => setView(item.id as ViewState)}
               className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-xl transition-all duration-200 border-l-4 ${
                 isActive 
                   ? `${activeBg} ${activeText} border-l-blue-500` 
                   : `border-l-transparent hover:bg-opacity-50 hover:bg-gray-800 ${textColor}`
-              } ${item.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+              }`}
             >
               <item.icon className={`w-5 h-5 ${isActive ? 'fill-current opacity-20' : ''}`} />
               <span className="font-medium tracking-wide">

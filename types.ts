@@ -62,6 +62,7 @@ export const ViewStates = {
   LIBRARY: 'LIBRARY',
   PLAYER: 'PLAYER',
   LEARNING: 'LEARNING',
+  COMMUNITY: 'COMMUNITY',
 } as const;
 
 export type ViewState = (typeof ViewStates)[keyof typeof ViewStates];
